@@ -3,6 +3,8 @@ import scipy.io as io
 import scipy as scp
 import numpy as np
 import scipy.sparse as sparse
+import time
+import pandas as pd
 
 #global variable
 MAX_ITER = 30000
@@ -14,27 +16,7 @@ class Method(Enum):
     CONJ_GRADIENT = "CONJ_GRADIENT"
 
 
-def read_sparse_matrix(input_file):
-    """
-    Reads a matrix from file path. Matrix must be a Matrix Market format.
-    Returns a sparse scipy matrix
-
-    Parameters
-    ----------
-    input_file: string
-
-    Returns
-    ----------
-    matrix: sparse matrix
-
-
-    """
-
-    matrix = sparse.csr_matrix(read_dense_matrix(input_file))
-
-    return matrix
-
-def read_dense_matrix(input_file):
+def read_matrix(input_file):
     """
     Reads a matrix from file path. Matrix must be a Matrix Market format.
     Returns a ndarray
@@ -96,7 +78,6 @@ def solve_ls(matrix, b, tol, method = Method.JACOBI):
     k = 0
 
     #get initial error
-    termine_noto = b
     residue = b - matrix @ x
 
     #needed for conjugated gradient
@@ -113,13 +94,7 @@ def solve_ls(matrix, b, tol, method = Method.JACOBI):
     inverse_diagonal = np.reshape(inverse_diagonal, (inverse_diagonal.shape[0], 1))
 
     #create lower triangular matrix
-    triangular_p = scp.sparse.tril(matrix)
-
-    #sparse.tril always return a sparse matrix. In the case of dense matrixes,
-    #convert the triangular matrix to dense in order to keep consistency when
-    #measuring performance.
-    if type(matrix) == np.ndarray:
-        triangular_p = triangular_p.toarray()
+    triangular_p = np.tril(matrix)
 
     while k < MAX_ITER and error > tol:
         if method == Method.JACOBI or method.upper() == Method.JACOBI.value:
@@ -130,7 +105,7 @@ def solve_ls(matrix, b, tol, method = Method.JACOBI):
             add_on = update_gauss(residue, triangular_p)
             x = x + add_on
 
-        elif method == Method.GRADIENT or method.upper == Method.GRADIENT.value:
+        elif method == Method.GRADIENT or method.upper() == Method.GRADIENT.value:
             alpha = gradient_alpha(matrix, residue)
             x = x + alpha*residue
 
@@ -144,21 +119,33 @@ def solve_ls(matrix, b, tol, method = Method.JACOBI):
 
         #update stopping criterion
         k += 1
-        try:
-            error = np.linalg.norm(residue) / np.linalg.norm(b)
-        except error:
-            import ipdb; ipdb.set_trace()
+        error = np.linalg.norm(residue) / np.linalg.norm(b)
+
+    if k >= MAX_ITER:
+        raise Exception("No convergence")
     return x, k
 
 def validate(matrix, b, tol, exact_solution):
-    results = np.zeros(shape=(matrix.shape[0], 4))
     iterations = np.zeros(shape=(4))
-    execution_time = np.zeros(shape=(4))
+    errors = np.zeros_like(iterations)
+    execution_time = np.zeros_like(iterations)
+    convergent = np.ones_like(iterations).astype(bool)
+
 
     for method, i in zip(Method._member_names_, range(4)):
-        print(method)
-        result, iterations[i] = solve_ls(matrix, b, tol, method=method)
-        results[:, 0] = result[:, 0]
+        print("Solving with... " + method)
+        time_start = time.perf_counter()
+        try:
+            result, iterations[i] = solve_ls(matrix, b, tol, method=method)
+            execution_time[i] = time.perf_counter() - time_start
+            errors[i] = np.linalg.norm(exact_solution - result ) / np.linalg.norm(exact_solution)
+        except Exception:
+            convergent[i] = False
+    data = np.array([Method._member_names_, iterations, errors, execution_time, convergent]).transpose()
+    results = pd.DataFrame(data=data,
+    columns = ["Method", "Iterations", "Relative error", "Execution time (s)", "Convergence" ])
+    print(results)
+
 
 def update_jacobi(x, residue, p_1):
     #elementwise multiplication
@@ -188,7 +175,7 @@ def gradient_alpha(matrix, residue):
     transposed_residue = residue.transpose()
     y = matrix @ residue
     a = transposed_residue @ residue
-    b = residue @ y
+    b = transposed_residue @ y
     return a/b
 
 def conjugated_gradient_alpha(x, matrix, residue, d):
