@@ -4,7 +4,7 @@ import os
 import time
 
 for filename in os.listdir(os.getcwd()):
-    if filename.endswith("vem2.mtx"):
+    if filename.endswith(".mtx"):
         print("Matrix:" + filename)
         matrix = iterative.read_matrix(filename)
         x = np.ones(shape = (matrix.shape[0], 1))
