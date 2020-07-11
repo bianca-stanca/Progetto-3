@@ -1,10 +1,8 @@
 from enum import Enum
-import scipy.io as io
-import scipy as scp
 import numpy as np
-import scipy.sparse as sparse
 import time
 import pandas as pd
+import warnings
 
 #global variable
 MAX_ITER = 30000
@@ -68,6 +66,12 @@ def solve_ls(matrix, b, tol, method = Method.JACOBI):
     if method not in Method._member_names_ and not isinstance(method, Method):
         raise TypeError('Method not supported')
 
+    if  method == Method.JACOBI or method.upper() == Method.JACOBI.value or \
+    method == Method.GAUSS_SEIDEL or method.upper() == Method.GAUSS_SEIDEL.value:
+        print("Checking convergence criteria")
+        if not __check_diagonal_dominance__(matrix):
+            warnings.warn("Convergence not guaranteed")
+
     #turn b into column array if not already in that shape
     if b.shape[1] != 1:
         np.reshape(b, (b.shape[1], b.shape[0]))
@@ -86,9 +90,9 @@ def solve_ls(matrix, b, tol, method = Method.JACOBI):
 
     error = np.linalg.norm(residue) / np.linalg.norm(b)
 
-
     diagonal_p = matrix.diagonal()
     inverse_diagonal = np.reciprocal(diagonal_p)
+
 
     #reshape into column array
     inverse_diagonal = np.reshape(inverse_diagonal, (inverse_diagonal.shape[0], 1))
@@ -98,24 +102,28 @@ def solve_ls(matrix, b, tol, method = Method.JACOBI):
 
     while k < MAX_ITER and error > tol:
         if method == Method.JACOBI or method.upper() == Method.JACOBI.value:
-            add_on = update_jacobi(x, residue, inverse_diagonal)
+            add_on = __update_jacobi__(x, residue, inverse_diagonal)
             x = x + add_on
 
-        elif method == Method.GAUSS_SEIDEL or method.upper() == Method.GAUSS_SEIDEL.value:
-            add_on = update_gauss(residue, triangular_p)
+        elif method == Method.GAUSS_SEIDEL or \
+        method.upper() == Method.GAUSS_SEIDEL.value:
+            add_on = __update_gauss__(residue, triangular_p)
             x = x + add_on
 
-        elif method == Method.GRADIENT or method.upper() == Method.GRADIENT.value:
-            alpha = gradient_alpha(matrix, residue)
+        elif method == Method.GRADIENT or \
+        method.upper() == Method.GRADIENT.value:
+            alpha = __gradient_alpha__(matrix, residue)
             x = x + alpha*residue
 
-        elif method == Method.CONJ_GRADIENT or method.upper() == Method.CONJ_GRADIENT.value :
-            alpha, y = conjugated_gradient_alpha(x, matrix, residue, d)
+        elif method == Method.CONJ_GRADIENT or \
+        method.upper() == Method.CONJ_GRADIENT.value :
+            alpha, y = __conjugated_gradient_alpha__(x, matrix, residue, d)
             x = x + alpha*d
 
         residue = b - matrix @ x
-        if method == Method.CONJ_GRADIENT or method.upper() == Method.CONJ_GRADIENT.value:
-            d = update_conjugated_gradient_d(matrix, residue, d, y)
+        if method == Method.CONJ_GRADIENT or \
+        method.upper() == Method.CONJ_GRADIENT.value:
+            d = __update_conjugated_gradient_d__(matrix, residue, d, y)
 
         #update stopping criterion
         k += 1
@@ -138,26 +146,29 @@ def validate(matrix, b, tol, exact_solution):
         try:
             result, iterations[i] = solve_ls(matrix, b, tol, method=method)
             execution_time[i] = time.perf_counter() - time_start
-            errors[i] = np.linalg.norm(exact_solution - result ) / np.linalg.norm(exact_solution)
+            errors[i] = np.linalg.norm(exact_solution - result ) / \
+            np.linalg.norm(exact_solution)
         except Exception:
             convergent[i] = False
-    data = np.array([Method._member_names_, iterations, errors, execution_time, convergent]).transpose()
+    data = np.array([Method._member_names_, iterations, errors, \
+    execution_time, convergent]).transpose()
     results = pd.DataFrame(data=data,
-    columns = ["Method", "Iterations", "Relative error", "Execution time (s)", "Convergence" ])
+    columns = ["Method", "Iterations", "Relative error",\
+     "Execution time (s)", "Convergence" ])
     print(results)
 
 
-def update_jacobi(x, residue, p_1):
+def __update_jacobi__(x, residue, p_1):
     #elementwise multiplication
     add_on = np.multiply(p_1, residue)
     return add_on
 
-def update_gauss(residue, triangular_p):
+def __update_gauss__(residue, triangular_p):
 
-    y = forward_substitution(triangular_p, residue)
+    y = __forward_substitution__(triangular_p, residue)
     return y
 
-def forward_substitution(matrix, b):
+def __forward_substitution__(matrix, b):
 
     x = np.zeros(shape = (matrix.shape[0], 1))
     if matrix[0,0] == 0:
@@ -170,7 +181,7 @@ def forward_substitution(matrix, b):
         x[i] = (b[i]-matrix[i, :] @ x) / matrix[i, i]
     return x
 
-def gradient_alpha(matrix, residue):
+def __gradient_alpha__(matrix, residue):
 
     transposed_residue = residue.transpose()
     y = matrix @ residue
@@ -178,7 +189,7 @@ def gradient_alpha(matrix, residue):
     b = transposed_residue @ y
     return a/b
 
-def conjugated_gradient_alpha(x, matrix, residue, d):
+def __conjugated_gradient_alpha__(x, matrix, residue, d):
 
     y = matrix @ d
     z = matrix @ residue
@@ -188,10 +199,18 @@ def conjugated_gradient_alpha(x, matrix, residue, d):
     alpha = (d.transpose() @ residue) / (d.transpose() @ y)
     return alpha[0, 0], y
 
-def update_conjugated_gradient_d(matrix, residue, d, y):
+def __update_conjugated_gradient_d__(matrix, residue, d, y):
     w = matrix @ residue
 
     #returns an array of an array
     beta = (d.transpose() @ w) / (d.transpose() @ y)
 
     return residue - beta[0, 0] * d
+
+def __check_diagonal_dominance__(matrix):
+    row_sum = np.sum(np.absolute(matrix), axis = 1).reshape(matrix.shape[0], 1)
+    for i in matrix.shape[0]:
+        row = row_sum[i] - matrix[i, i]
+        if matrix[i, i] <= row:
+            return False
+    return True
